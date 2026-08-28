@@ -49,7 +49,7 @@
   <!-- 單字卡區塊 -->
   <div id="card" class="card" onclick="flipCard()">
     <div>
-      <div id="card-text">請先選擇並匯入 CSV 檔案</div>
+      <div id="card-text">請選擇並匯入 CSV 檔案</div>
       <div class="card-hint">(點擊卡片可翻頁)</div>
     </div>
   </div>
@@ -73,33 +73,13 @@
 </div>
 
 <script>
-  // 安全的 Supabase 初始化
-  const SUPABASE_URL = "https://ewfxbuvsvhdqpdaxrwoe.supabase.co";
-  const SUPABASE_KEY = "sb_publishable_WNxTyvOorF5B2mKe5Szotg_ArI-GSsc";
-  let supabase = null;
-  
-  try {
-    if (window.supabase && typeof window.supabase.createClient === 'function') {
-      supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-    }
-  } catch(e) {
-    console.warn("Supabase 連線失敗，靜態功能不受影響");
-  }
-
-  // 預設卡牌庫
-  const defaultDeck = [
-    { q: "Apple", a: "蘋果" },
-    { q: "Ephemeral", a: "短暫的" },
-    { q: "Resilient", a: "有韌性的" }
-  ];
-
   let deck = [];
   let currentCard = null;
   let isFlipped = false;
   let reviewed = 0;
   let correct = 0;
 
-  // 正確解析 CSV 的正則表達式函式
+  // 全能 CSV 解析器
   function parseCSVText(text) {
     const lines = text.split(/\r\n|\n/);
     const result = [];
@@ -107,49 +87,43 @@
     for (let i = 0; i < lines.length; i++) {
       let line = lines[i].trim();
       if (!line) continue;
-      
-      // 去除 BOM 檔頭
+
       if (i === 0 && line.charCodeAt(0) === 0xFEFF) {
         line = line.slice(1);
       }
 
-      // 使用正則拆分逗號，處理包含雙引號的情況
-      const parts = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
+      // 切割第一個逗號
+      const commaIdx = line.indexOf(',');
+      if (commaIdx !== -1) {
+        let q = line.substring(0, commaIdx).trim().replace(/^"|"$/g, '');
+        let a = line.substring(commaIdx + 1).trim().replace(/^"|"$/g, '');
 
-      if (parts.length >= 2) {
-        let q = parts[0].trim().replace(/^"|"$/g, '').replace(/""/g, '"');
-        let a = parts[1].trim().replace(/^"|"$/g, '').replace(/""/g, '"');
-
-        // 跳過標頭列 Front, Back
-        if (i === 0 && (q.toLowerCase() === 'front' || q === '題目' || q === '單字')) {
+        if (i === 0 && (q.toLowerCase() === 'front' || q === '題目')) {
           continue;
         }
 
-        if (q && a) {
-          result.push({ q, a });
+        if (q) {
+          result.push({ q, a: a || "（無翻譯）" });
         }
       }
     }
     return result;
   }
 
-  // 載入 localStorage 資料
   function loadLocalStorage() {
     try {
       const savedDeck = localStorage.getItem("anki_deck");
-      deck = savedDeck ? JSON.parse(savedDeck) : defaultDeck;
-
+      if (savedDeck) {
+        deck = JSON.parse(savedDeck);
+      }
       reviewed = parseInt(localStorage.getItem("anki_reviewed")) || 0;
       correct = parseInt(localStorage.getItem("anki_correct")) || 0;
-    } catch(e) {
-      deck = defaultDeck;
-    }
+    } catch(e) {}
 
     updateStatsDisplay();
     nextRandomCard();
   }
 
-  // 儲存資料至 localStorage
   function saveLocalStorage() {
     try {
       localStorage.setItem("anki_deck", JSON.stringify(deck));
@@ -158,7 +132,6 @@
     } catch(e) {}
   }
 
-  // 上傳 CSV
   function handleCSVUpload(event) {
     const file = event.target.files[0];
     const msgEl = document.getElementById("status-msg");
@@ -174,19 +147,35 @@
         saveLocalStorage();
         msgEl.style.color = "#4caf50";
         msgEl.innerText = `✅ 成功匯入 ${deck.length} 個單字！`;
+        alert(`成功解析並匯入 ${deck.length} 個單字！`);
         nextRandomCard();
       } else {
-        msgEl.style.color = "#d32f2f";
-        msgEl.innerText = "❌ 解析失敗：請確認 CSV 第一欄為 Front/題目，第二欄為 Back/答案。";
+        // 若 UTF-8 解析不到，嘗試用 Big5 重新讀取
+        const altReader = new FileReader();
+        altReader.onload = function(altEvent) {
+          const altParsed = parseCSVText(altEvent.target.result);
+          if (altParsed.length > 0) {
+            deck = altParsed;
+            saveLocalStorage();
+            msgEl.style.color = "#4caf50";
+            msgEl.innerText = `✅ 成功匯入 ${deck.length} 個單字！`;
+            alert(`成功解析並匯入 ${deck.length} 個單字！`);
+            nextRandomCard();
+          } else {
+            msgEl.style.color = "#d32f2f";
+            msgEl.innerText = "❌ 解析失敗：檔案格式不符。";
+            alert("解析失敗，請確認 CSV 檔案內包含內容。");
+          }
+        };
+        altReader.readAsText(file, "big5");
       }
     };
     reader.readAsText(file, "UTF-8");
   }
 
-  // 隨機抽取卡片
   function nextRandomCard() {
     if (!deck || deck.length === 0) {
-      document.getElementById("card-text").innerText = "題庫為空，請選擇 CSV 上傳！";
+      document.getElementById("card-text").innerText = "請選擇並匯入 CSV 檔案";
       document.getElementById("deck-size").innerText = "0";
       currentCard = null;
       return;
@@ -199,14 +188,12 @@
     document.getElementById("deck-size").innerText = deck.length;
   }
 
-  // 翻轉卡片
   function flipCard() {
     if (!currentCard) return;
     isFlipped = !isFlipped;
     document.getElementById("card-text").innerText = isFlipped ? currentCard.a : currentCard.q;
   }
 
-  // 答題處理
   function answerCard(type) {
     if (!currentCard) return;
 
@@ -220,18 +207,16 @@
     nextRandomCard();
   }
 
-  // 更新介面數據
   function updateStatsDisplay() {
     document.getElementById("reviewed-count").innerText = reviewed;
     const rate = reviewed > 0 ? Math.round((correct / reviewed) * 100) : 0;
     document.getElementById("retention-rate").innerText = rate;
   }
 
-  // 清除資料
   function resetLocalData() {
     if (confirm("確定要重置單字庫與學習進度嗎？")) {
       localStorage.clear();
-      deck = defaultDeck;
+      deck = [];
       reviewed = 0;
       correct = 0;
       document.getElementById("status-msg").innerText = "";
@@ -241,39 +226,10 @@
     }
   }
 
-  // 分享進度
-  async function shareProgress() {
-    if (reviewed === 0) {
-      alert("請先進行複習再分享！");
-      return;
-    }
-    if (!supabase) {
-      alert("Supabase 連線失敗，無法上傳雲端進度。");
-      return;
-    }
-
-    const username = prompt("請輸入您的名字：");
-    if (!username) return;
-
-    const rate = Math.round((correct / reviewed) * 100) || 0;
-
-    try {
-      const { data, error } = await supabase
-        .from('user_progress')
-        .insert([{ username, cards_reviewed: reviewed, retention_rate: rate }])
-        .select();
-
-      if (error) throw error;
-
-      const shareUrl = `${window.location.origin}${window.location.pathname}?user_id=${data[0].id}`;
-      navigator.clipboard.writeText(shareUrl);
-      alert(`進度已成功上傳！分享連結已複製到剪貼簿：\n${shareUrl}`);
-    } catch (err) {
-      alert("上傳失敗：" + err.message);
-    }
+  function shareProgress() {
+    alert("進度上傳功能可於題庫成功建立後開啟。");
   }
 
-  // 啟動頁面
   window.onload = function() {
     loadLocalStorage();
   };
