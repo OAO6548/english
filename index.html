@@ -6,13 +6,13 @@
   <title>Anki 閃卡學習機</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
-    body { font-family: system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px; background: #f4f4f9; color: #333; }
+    body { font-family: system-ui, -apple-system, sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px; background: #f4f4f9; color: #333; }
     .container { width: 100%; max-width: 450px; display: flex; flex-direction: column; align-items: center; }
     
     .upload-box { background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); width: 100%; margin-bottom: 20px; text-align: center; box-sizing: border-box; }
     .upload-box input { margin-top: 8px; width: 100%; }
     
-    .card { width: 100%; height: 200px; background: white; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,0.1); cursor: pointer; text-align: center; margin-bottom: 15px; padding: 20px; box-sizing: border-box; transition: transform 0.1s; word-break: break-word; }
+    .card { width: 100%; height: 200px; background: white; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,0.1); cursor: pointer; text-align: center; margin-bottom: 15px; padding: 20px; box-sizing: border-box; transition: transform 0.1s; word-break: break-word; line-height: 1.4; }
     .card:active { transform: scale(0.98); }
     .card-hint { font-size: 12px; color: #888; font-weight: normal; margin-top: 8px; }
 
@@ -24,11 +24,11 @@
     .good { background: #ff9800; color: white; }
     .easy { background: #4caf50; color: white; }
     
-    .share-btn { background: #2196f3; color: white; width: 100%; margin-bottom: 10px; }
-    .clear-btn { background: #9e9e9e; color: white; width: 100%; }
+    .share-btn { background: #2196f3; color: white; width: 100%; margin-bottom: 10px; padding: 12px; font-size: 15px; }
+    .clear-btn { background: #9e9e9e; color: white; width: 100%; padding: 12px; font-size: 15px; }
     
     .stats { background: #fff; padding: 15px; border-radius: 8px; width: 100%; box-shadow: 0 2px 6px rgba(0,0,0,0.05); box-sizing: border-box; margin-bottom: 15px; }
-    .msg { font-size: 12px; color: #d32f2f; margin-top: 5px; }
+    .msg { font-size: 13px; font-weight: bold; margin-top: 8px; }
   </style>
 </head>
 <body>
@@ -40,7 +40,7 @@
   <div class="upload-box">
     <label><strong>匯入單字庫 (CSV 格式)：</strong></label><br>
     <input type="file" id="csv-file" accept=".csv, .txt" onchange="handleCSVUpload(event)">
-    <div id="status-msg" class="msg" style="color: #4caf50;"></div>
+    <div id="status-msg" class="msg"></div>
     <p style="font-size: 12px; color: #666; margin-top: 5px; margin-bottom: 0;">
       格式：第一欄「題目」，第二欄「答案」
     </p>
@@ -49,8 +49,8 @@
   <!-- 單字卡區塊 -->
   <div id="card" class="card" onclick="flipCard()">
     <div>
-      <div id="card-text">讀取中...</div>
-      <div class="card-hint">(點擊翻牌)</div>
+      <div id="card-text">請先選擇並匯入 CSV 檔案</div>
+      <div class="card-hint">(點擊卡片可翻頁)</div>
     </div>
   </div>
   
@@ -73,13 +73,18 @@
 </div>
 
 <script>
-  // Supabase 憑證設定
+  // 安全的 Supabase 初始化
   const SUPABASE_URL = "https://ewfxbuvsvhdqpdaxrwoe.supabase.co";
   const SUPABASE_KEY = "sb_publishable_WNxTyvOorF5B2mKe5Szotg_ArI-GSsc";
   let supabase = null;
+  
   try {
-    supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-  } catch(e) { console.log("Supabase 初始化錯誤"); }
+    if (window.supabase && typeof window.supabase.createClient === 'function') {
+      supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    }
+  } catch(e) {
+    console.warn("Supabase 連線失敗，靜態功能不受影響");
+  }
 
   // 預設卡牌庫
   const defaultDeck = [
@@ -94,13 +99,51 @@
   let reviewed = 0;
   let correct = 0;
 
+  // 正確解析 CSV 的正則表達式函式
+  function parseCSVText(text) {
+    const lines = text.split(/\r\n|\n/);
+    const result = [];
+    
+    for (let i = 0; i < lines.length; i++) {
+      let line = lines[i].trim();
+      if (!line) continue;
+      
+      // 去除 BOM 檔頭
+      if (i === 0 && line.charCodeAt(0) === 0xFEFF) {
+        line = line.slice(1);
+      }
+
+      // 使用正則拆分逗號，處理包含雙引號的情況
+      const parts = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
+
+      if (parts.length >= 2) {
+        let q = parts[0].trim().replace(/^"|"$/g, '').replace(/""/g, '"');
+        let a = parts[1].trim().replace(/^"|"$/g, '').replace(/""/g, '"');
+
+        // 跳過標頭列 Front, Back
+        if (i === 0 && (q.toLowerCase() === 'front' || q === '題目' || q === '單字')) {
+          continue;
+        }
+
+        if (q && a) {
+          result.push({ q, a });
+        }
+      }
+    }
+    return result;
+  }
+
   // 載入 localStorage 資料
   function loadLocalStorage() {
-    const savedDeck = localStorage.getItem("anki_deck");
-    deck = savedDeck ? JSON.parse(savedDeck) : defaultDeck;
+    try {
+      const savedDeck = localStorage.getItem("anki_deck");
+      deck = savedDeck ? JSON.parse(savedDeck) : defaultDeck;
 
-    reviewed = parseInt(localStorage.getItem("anki_reviewed")) || 0;
-    correct = parseInt(localStorage.getItem("anki_correct")) || 0;
+      reviewed = parseInt(localStorage.getItem("anki_reviewed")) || 0;
+      correct = parseInt(localStorage.getItem("anki_correct")) || 0;
+    } catch(e) {
+      deck = defaultDeck;
+    }
 
     updateStatsDisplay();
     nextRandomCard();
@@ -108,12 +151,14 @@
 
   // 儲存資料至 localStorage
   function saveLocalStorage() {
-    localStorage.setItem("anki_deck", JSON.stringify(deck));
-    localStorage.setItem("anki_reviewed", reviewed);
-    localStorage.setItem("anki_correct", correct);
+    try {
+      localStorage.setItem("anki_deck", JSON.stringify(deck));
+      localStorage.setItem("anki_reviewed", reviewed.toString());
+      localStorage.setItem("anki_correct", correct.toString());
+    } catch(e) {}
   }
 
-  // 強化版 CSV 上傳處理
+  // 上傳 CSV
   function handleCSVUpload(event) {
     const file = event.target.files[0];
     const msgEl = document.getElementById("status-msg");
@@ -122,39 +167,17 @@
     const reader = new FileReader();
     reader.onload = function(e) {
       const text = e.target.result;
-      const lines = text.split(/\r\n|\n/);
-      const newDeck = [];
+      const parsedDeck = parseCSVText(text);
 
-      lines.forEach((line, index) => {
-        let cleanLine = line.trim();
-        if (!cleanLine) return;
-
-        // 自動判斷分隔符（逗號、分號、Tab）
-        let parts = [];
-        if (cleanLine.includes(',')) parts = cleanLine.split(',');
-        else if (cleanLine.includes(';')) parts = cleanLine.split(';');
-        else if (cleanLine.includes('\t')) parts = cleanLine.split('\t');
-
-        if (parts.length >= 2) {
-          const q = parts[0].trim().replace(/^["'\s]+|["'\s]+$/g, '');
-          const a = parts[1].trim().replace(/^["'\s]+|["'\s]+$/g, '');
-
-          // 跳過可能存在的標頭列（Front, Back / 題目, 答案）
-          if (index === 0 && (q.toLowerCase() === 'front' || q === '題目' || q === '單字')) return;
-
-          if (q && a) newDeck.push({ q, a });
-        }
-      });
-
-      if (newDeck.length > 0) {
-        deck = newDeck;
+      if (parsedDeck.length > 0) {
+        deck = parsedDeck;
         saveLocalStorage();
         msgEl.style.color = "#4caf50";
         msgEl.innerText = `✅ 成功匯入 ${deck.length} 個單字！`;
         nextRandomCard();
       } else {
         msgEl.style.color = "#d32f2f";
-        msgEl.innerText = "❌ 解析失敗：請確認 CSV 第一欄為題目，第二欄為答案，並用逗號分隔。";
+        msgEl.innerText = "❌ 解析失敗：請確認 CSV 第一欄為 Front/題目，第二欄為 Back/答案。";
       }
     };
     reader.readAsText(file, "UTF-8");
@@ -162,9 +185,10 @@
 
   // 隨機抽取卡片
   function nextRandomCard() {
-    if (deck.length === 0) {
-      document.getElementById("card-text").innerText = "題庫為空，請上傳 CSV！";
+    if (!deck || deck.length === 0) {
+      document.getElementById("card-text").innerText = "題庫為空，請選擇 CSV 上傳！";
       document.getElementById("deck-size").innerText = "0";
+      currentCard = null;
       return;
     }
     isFlipped = false;
@@ -182,7 +206,7 @@
     document.getElementById("card-text").innerText = isFlipped ? currentCard.a : currentCard.q;
   }
 
-  // 按鈕點擊處理
+  // 答題處理
   function answerCard(type) {
     if (!currentCard) return;
 
@@ -196,14 +220,14 @@
     nextRandomCard();
   }
 
-  // 更新介面數字
+  // 更新介面數據
   function updateStatsDisplay() {
     document.getElementById("reviewed-count").innerText = reviewed;
     const rate = reviewed > 0 ? Math.round((correct / reviewed) * 100) : 0;
     document.getElementById("retention-rate").innerText = rate;
   }
 
-  // 重置資料
+  // 清除資料
   function resetLocalData() {
     if (confirm("確定要重置單字庫與學習進度嗎？")) {
       localStorage.clear();
@@ -217,14 +241,14 @@
     }
   }
 
-  // 上傳分享至 Supabase
+  // 分享進度
   async function shareProgress() {
     if (reviewed === 0) {
       alert("請先進行複習再分享！");
       return;
     }
     if (!supabase) {
-      alert("未設定 Supabase 金鑰，無法上傳雲端。");
+      alert("Supabase 連線失敗，無法上傳雲端進度。");
       return;
     }
 
@@ -243,14 +267,16 @@
 
       const shareUrl = `${window.location.origin}${window.location.pathname}?user_id=${data[0].id}`;
       navigator.clipboard.writeText(shareUrl);
-      alert(`進度已成功上傳！分享連結已複製：\n${shareUrl}`);
+      alert(`進度已成功上傳！分享連結已複製到剪貼簿：\n${shareUrl}`);
     } catch (err) {
-      alert("上傳失敗，請確認 SQL 資料表設定與網路：" + err.message);
+      alert("上傳失敗：" + err.message);
     }
   }
 
-  // 頁面初始化
-  loadLocalStorage();
+  // 啟動頁面
+  window.onload = function() {
+    loadLocalStorage();
+  };
 </script>
 </body>
 </html>
