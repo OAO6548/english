@@ -10,9 +10,9 @@
     .container { width: 100%; max-width: 450px; display: flex; flex-direction: column; align-items: center; }
     
     .upload-box { background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); width: 100%; margin-bottom: 20px; text-align: center; box-sizing: border-box; }
-    .upload-box input { margin-top: 8px; }
+    .upload-box input { margin-top: 8px; width: 100%; }
     
-    .card { width: 100%; height: 200px; background: white; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,0.1); cursor: pointer; text-align: center; margin-bottom: 15px; padding: 20px; box-sizing: border-box; transition: transform 0.1s; }
+    .card { width: 100%; height: 200px; background: white; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,0.1); cursor: pointer; text-align: center; margin-bottom: 15px; padding: 20px; box-sizing: border-box; transition: transform 0.1s; word-break: break-word; }
     .card:active { transform: scale(0.98); }
     .card-hint { font-size: 12px; color: #888; font-weight: normal; margin-top: 8px; }
 
@@ -28,6 +28,7 @@
     .clear-btn { background: #9e9e9e; color: white; width: 100%; }
     
     .stats { background: #fff; padding: 15px; border-radius: 8px; width: 100%; box-shadow: 0 2px 6px rgba(0,0,0,0.05); box-sizing: border-box; margin-bottom: 15px; }
+    .msg { font-size: 12px; color: #d32f2f; margin-top: 5px; }
   </style>
 </head>
 <body>
@@ -38,7 +39,8 @@
   <!-- CSV 匯入區塊 -->
   <div class="upload-box">
     <label><strong>匯入單字庫 (CSV 格式)：</strong></label><br>
-    <input type="file" id="csv-file" accept=".csv" onchange="handleCSVUpload(event)">
+    <input type="file" id="csv-file" accept=".csv, .txt" onchange="handleCSVUpload(event)">
+    <div id="status-msg" class="msg" style="color: #4caf50;"></div>
     <p style="font-size: 12px; color: #666; margin-top: 5px; margin-bottom: 0;">
       格式：第一欄「題目」，第二欄「答案」
     </p>
@@ -111,9 +113,10 @@
     localStorage.setItem("anki_correct", correct);
   }
 
-  // 處理 CSV 上傳
+  // 強化版 CSV 上傳處理
   function handleCSVUpload(event) {
     const file = event.target.files[0];
+    const msgEl = document.getElementById("status-msg");
     if (!file) return;
 
     const reader = new FileReader();
@@ -122,12 +125,23 @@
       const lines = text.split(/\r\n|\n/);
       const newDeck = [];
 
-      lines.forEach(line => {
-        if (!line.trim()) return;
-        const parts = line.split(',');
+      lines.forEach((line, index) => {
+        let cleanLine = line.trim();
+        if (!cleanLine) return;
+
+        // 自動判斷分隔符（逗號、分號、Tab）
+        let parts = [];
+        if (cleanLine.includes(',')) parts = cleanLine.split(',');
+        else if (cleanLine.includes(';')) parts = cleanLine.split(';');
+        else if (cleanLine.includes('\t')) parts = cleanLine.split('\t');
+
         if (parts.length >= 2) {
-          const q = parts[0].trim().replace(/^"|"$/g, '');
-          const a = parts[1].trim().replace(/^"|"$/g, '');
+          const q = parts[0].trim().replace(/^["'\s]+|["'\s]+$/g, '');
+          const a = parts[1].trim().replace(/^["'\s]+|["'\s]+$/g, '');
+
+          // 跳過可能存在的標頭列（Front, Back / 題目, 答案）
+          if (index === 0 && (q.toLowerCase() === 'front' || q === '題目' || q === '單字')) return;
+
           if (q && a) newDeck.push({ q, a });
         }
       });
@@ -135,19 +149,22 @@
       if (newDeck.length > 0) {
         deck = newDeck;
         saveLocalStorage();
-        alert(`成功匯入 ${deck.length} 個單字！`);
+        msgEl.style.color = "#4caf50";
+        msgEl.innerText = `✅ 成功匯入 ${deck.length} 個單字！`;
         nextRandomCard();
       } else {
-        alert("CSV 解析失敗，請確認格式為：題目,答案");
+        msgEl.style.color = "#d32f2f";
+        msgEl.innerText = "❌ 解析失敗：請確認 CSV 第一欄為題目，第二欄為答案，並用逗號分隔。";
       }
     };
-    reader.readAsText(file);
+    reader.readAsText(file, "UTF-8");
   }
 
   // 隨機抽取卡片
   function nextRandomCard() {
     if (deck.length === 0) {
       document.getElementById("card-text").innerText = "題庫為空，請上傳 CSV！";
+      document.getElementById("deck-size").innerText = "0";
       return;
     }
     isFlipped = false;
@@ -193,6 +210,7 @@
       deck = defaultDeck;
       reviewed = 0;
       correct = 0;
+      document.getElementById("status-msg").innerText = "";
       saveLocalStorage();
       updateStatsDisplay();
       nextRandomCard();
